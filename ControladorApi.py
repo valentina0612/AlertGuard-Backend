@@ -262,20 +262,30 @@ async def get_results(session_id: str):
         summary["session_id"] = session_id
         summary["processed_frames"] = len(res.get("detections", []))
 
-        # 👇 Guardar en Mongo directamente
-        video_id = sessions_metadata.get(session_id)
-        if video_id:
-            logger.info(f"💾 Guardando resultados en MongoDB para video {video_id}")
-            success = update_video_results(video_id, res)
-            if not success:
-                logger.warning(f"⚠️ No se pudieron guardar resultados para video {video_id}")
-            else:
-                summary["saved_to_mongo"] = True
-        else:
-            logger.warning(f"⚠️ No hay video_id asociado a session {session_id}")
-            summary["saved_to_mongo"] = False
-
     return JSONResponse(summary)
+
+
+@app.put("/results/{session_id}/save")
+async def save_results(session_id: str):
+    if session_id not in analysis_results:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    res = analysis_results[session_id]
+    summary = generar_resumen(res)
+
+    video_id = sessions_metadata.get(session_id)
+
+    if not video_id:
+        raise HTTPException(status_code=404, detail="Video ID not found for this session")
+
+    logger.info(f"💾 Guardando resultados en MongoDB para video {video_id}")
+    success = update_video_results(video_id, summary)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Error guardando resultados en MongoDB")
+
+    return {"message": "Resultados guardados correctamente", "video_id": video_id}
+
 
 
 
