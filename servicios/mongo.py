@@ -1,20 +1,44 @@
+# servicios/mongo.py - VERSIÓN SÍNCRONA
 from bson import ObjectId
 from typing import Optional, Dict
-from config.db import videos  # tu instancia de la colección
-from config.settings import settings
+from config.db import videos
+from datetime import datetime
+import uuid
+import logging
 
-async def save_video_metadata(s3_key: str, url: str, size: int) -> str:
-    doc = {
-        "s3_key": s3_key,
-        "url": url,
-        "size": size,
-    }
-    result = videos.insert_one(doc)
-    return str(result.inserted_id)
+logger = logging.getLogger(__name__)
 
-async def get_video_metadata(s3_key: str) -> Optional[Dict]:
-    return videos.find_one({"s3_key": s3_key})
+def save_video_metadata(s3_key: str, url: str, size: int) -> str:
+    """
+    Guarda la metadata de un video en MongoDB (SÍNCRONO).
+    """
+    try:
+        doc = {
+            "_id": str(uuid.uuid4()),
+            "s3_key": s3_key,
+            "url": url,
+            "size": size,
+            "upload_date": datetime.utcnow(),
+            "status": "active"
+        }
+        result = videos.insert_one(doc)  # ✅ SIN await
+        logger.info(f"✅ Metadata guardada en MongoDB para: {s3_key}")
+        return str(doc["_id"])
+    except Exception as e:
+        logger.error(f"❌ Error guardando en MongoDB: {str(e)}")
+        raise
 
-async def delete_video_metadata(s3_key: str) -> bool:
-    result = videos.delete_one({"s3_key": s3_key})
-    return result.deleted_count > 0
+def get_video_metadata(s3_key: str) -> Optional[Dict]:
+    try:
+        return videos.find_one({"s3_key": s3_key})  # ✅ SIN await
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo metadata: {str(e)}")
+        return None
+
+def delete_video_metadata(s3_key: str) -> bool:
+    try:
+        result = videos.delete_one({"s3_key": s3_key})  # ✅ SIN await
+        return result.deleted_count > 0
+    except Exception as e:
+        logger.error(f"❌ Error eliminando metadata: {str(e)}")
+        return False

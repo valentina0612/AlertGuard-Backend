@@ -3,9 +3,9 @@ import numpy as np
 
 # Configuración de video
 SEQUENCE_LENGTH = 25
-SKIP_FRAMES_YOLO = 6
+SKIP_FRAMES_YOLO = 2
 STREAM_SIZE = (480, 270)
-JPEG_QUALITY = 85
+JPEG_QUALITY = 100
 
 
 # Preprocesamiento para 3D CNN

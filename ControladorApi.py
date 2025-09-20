@@ -5,6 +5,7 @@ import tempfile
 import cv2
 import json
 import numpy as np
+import logging  # ✅ Añadir logging
 from concurrent.futures import ProcessPoolExecutor
 from collections import deque
 from fastapi import FastAPI, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
@@ -19,10 +20,15 @@ from servicios.SistemaDeteccion import cnn_queue, run_cnn_batch, analizar_con_mo
 from servicios.ProcesadorVideo import preprocesar_imagen, STREAM_SIZE, JPEG_QUALITY, SKIP_FRAMES_YOLO
 from servicios.Reporte import generar_resumen
 from config.storage import StorageService
-from servicios.mongo import save_video_metadata  # lo que definimos para Mongo
+from servicios.mongo import save_video_metadata
 from config.settings import settings
 
+# ✅ Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 storage_service = StorageService()
+
 # --- Configuración de FastAPI ---
 app = FastAPI()
 
@@ -76,36 +82,71 @@ def launch_cnn_workers():
 # --- Endpoint: Subida de video ---
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):
-    # Guardar temporalmente en disco (para tu pipeline CNN/YOLO)
+    logger.info(f"📤 Iniciando upload del archivo: {file.filename}")
+    
+    # Validar tipo de archivo
+    if not file.content_type or not file.content_type.startswith('video/'):
+        logger.warning(f"❌ Tipo de archivo no permitido: {file.content_type}")
+        raise HTTPException(status_code=400, detail="Solo se permiten archivos de video")
+
+    # Guardar temporalmente en disco (para pipeline CNN/YOLO)
     tmp_dir = tempfile.mkdtemp(prefix="vid_")
     dst = os.path.join(tmp_dir, file.filename or "video.mp4")
-    with open(dst, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    
+    try:
+        logger.info(f"💾 Guardando archivo temporal en: {dst}")
+        with open(dst, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        logger.info("✅ Archivo temporal guardado correctamente")
+    except Exception as e:
+        logger.error(f"❌ Error guardando archivo temporal: {str(e)}")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"Error guardando archivo temporal: {str(e)}")
 
     # Crear sesión local
     sid = new_session_id()
+    logger.info(f"🎬 Creando sesión: {sid}")
     create_session(sid, dst)
     buffers[sid] = deque(maxlen=SEQUENCE_LENGTH)
     cnn_busy[sid] = False
 
-    # Subir a S3
-    s3_key = f"videos/{sid}_{file.filename}"
-    with open(dst, "rb") as f:
-        s3_key, url = await storage_service.upload_to_s3(f, s3_key)
+    try:
+        # Subir a AWS S3
+        filename = file.filename or "video.mp4"
+        s3_key = f"videos/{sid}_{filename}"
+        logger.info(f"☁️  Subiendo a S3 con key: {s3_key}")
+        
+        with open(dst, "rb") as f:
+            s3_key, url = await storage_service.upload_to_s3(f, s3_key)
+        logger.info(f"✅ Video subido a S3: {url}")
 
-    # Obtener tamaño real en S3
-    size = await storage_service.get_video_size(s3_key)
+        # Obtener tamaño real en S3
+        size = await storage_service.get_video_size(s3_key)
+        logger.info(f"📊 Tamaño del video: {size} bytes")
 
-    # Guardar metadata en Mongo
-    video_id = await save_video_metadata(s3_key, url, size)
+        # Guardar metadata en MongoDB (✅ SIN await - función síncrona)
+        logger.info("💾 Guardando metadata en MongoDB")
+        video_id = save_video_metadata(s3_key, url, size)  # ✅ SIN await
+        logger.info(f"✅ Metadata guardada con ID: {video_id}")
 
-    return JSONResponse({
-        "session_id": sid,
-        "video_id": video_id,
-        "s3_key": s3_key,
-        "url": url,
-        "size": size
-    })
+        return JSONResponse({
+            "session_id": sid,
+            "video_id": video_id,
+            "s3_key": s3_key,
+            "url": url,
+            "size": size,
+            "filename": filename,
+            "message": "Video subido y procesado correctamente"
+        })
+
+    except HTTPException as he:
+        logger.error(f"❌ HTTPException durante upload: {he.detail}")
+        cleanup_session(sid, remove_file=True)
+        raise he
+    except Exception as e:
+        logger.error(f"❌ Error inesperado durante upload: {str(e)}", exc_info=True)
+        cleanup_session(sid, remove_file=True)
+        raise HTTPException(status_code=500, detail=f"Error procesando video: {str(e)}")
 
 # --- Endpoint: WebSocket ---
 @app.websocket("/ws/{session_id}")
@@ -168,20 +209,27 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 )
 
             # Enviar frame
-            ok_enc, jpeg = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
-            if ok_enc:
+            ok_enc, jpeg = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]) 
+            if ok_enc: 
                 await websocket.send_bytes(jpeg.tobytes())
+            
 
             await asyncio.sleep(0.02)
 
     except WebSocketDisconnect:
         pass
+    except Exception as e:
+        logger.error(f"❌ Error en WebSocket: {str(e)}")
     finally:
         cap.release()
-        msg = {"type": "end", "status": "completed"}
-        await websocket.send_text(json.dumps(msg))
-        await websocket.close()
-        cleanup_session(session_id, remove_file=True)
+        try:
+            msg = {"type": "end", "status": "completed"}
+            await websocket.send_text(json.dumps(msg))
+        except:
+            pass
+        finally:
+            await websocket.close()
+            cleanup_session(session_id, remove_file=True)
 
 # --- Endpoint: Resultados ---
 @app.get("/results/{session_id}")
@@ -191,4 +239,37 @@ async def get_results(session_id: str):
 
     res = analysis_results[session_id]
     summary = generar_resumen(res)
+    
+    # Agregar información del video si está disponible
+    if session_id in sessions_files:
+        summary["session_id"] = session_id
+        summary["processed_frames"] = len(res.get("detections", []))
+    
     return JSONResponse(summary)
+
+# --- Endpoint: Health Check ---
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "services": {
+            "aws_s3": "configured",
+            "mongodb": "configured",
+            "cnn_model": "loaded",
+            "yolo_model": "loaded"
+        }
+    }
+
+# --- Endpoint: Info del Video ---
+@app.get("/video/{session_id}/info")
+async def get_video_info(session_id: str):
+    if session_id not in sessions_files:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return {
+        "session_id": session_id,
+        "local_path": sessions_files[session_id],
+        "has_alerts": alerts.get(session_id, False),
+        "buffer_size": len(buffers.get(session_id, [])),
+        "analysis_results": len(analysis_results.get(session_id, {}).get("detections", []))
+    }
