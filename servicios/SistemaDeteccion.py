@@ -15,7 +15,7 @@ print("Modelos cargados correctamente")
 # Cola y Executor
 # =========================
 cnn_queue: asyncio.Queue = asyncio.Queue()
-executor = ThreadPoolExecutor(max_workers=1)
+executor = ThreadPoolExecutor(max_workers=2)
 
 # =========================
 # Predicción con CNN
@@ -31,7 +31,7 @@ async def run_cnn_batch(batch):
 # Detección con YOLO
 # =========================
 def analizar_con_modelos(frame, results_dict, frame_count):
-    results = modeloObjetos.track(frame, persist=True, conf=0.6, imgsz=288)
+    results = modeloObjetos.track(frame, persist=True, conf=0.6, imgsz=288,verbose=False)
     annotated = results[0].plot()
 
     for box in results[0].boxes:

@@ -2,6 +2,7 @@ import asyncio
 import shutil
 import os
 import tempfile
+from typing import Dict
 import cv2
 import json
 import numpy as np
@@ -20,7 +21,7 @@ from servicios.SistemaDeteccion import cnn_queue, run_cnn_batch, analizar_con_mo
 from servicios.ProcesadorVideo import preprocesar_imagen, STREAM_SIZE, JPEG_QUALITY, SKIP_FRAMES_YOLO
 from servicios.Reporte import generar_resumen
 from config.storage import StorageService
-from servicios.mongo import save_video_metadata
+from servicios.mongo import save_video_metadata, update_video_results
 from config.settings import settings
 
 # ✅ Configurar logging
@@ -41,6 +42,8 @@ executor = ProcessPoolExecutor(max_workers=NUM_CNN_WORKERS)
 SEQUENCE_LENGTH = 25  # Ventana máxima
 MIN_SEQUENCE = 8      # Mínimos frames para primera inferencia
 cnn_busy = {}         # session_id -> bool para controlar inferencias en vuelo
+# Mapeo global de session_id -> video_id
+sessions_metadata: Dict[str, str] = {}
 
 # Wrapper síncrono para ejecutar CNN
 def run_cnn_batch_sync(batch):
@@ -59,10 +62,20 @@ async def cnn_worker():
         try:
             batch, websocket, session_id = await cnn_queue.get()
             try:
+                # 👇 si la sesión ya tiene alerta, no vuelvas a procesar
+                if alerts.get(session_id, False):
+                    cnn_busy[session_id] = False
+                    continue
+
                 pred = await run_cnn_async(batch)
+
                 if pred == 1 and not alerts.get(session_id, False):
                     alerts[session_id] = True
-                    msg = {"type": "alert", "status": "warning", "message": "Anomalía detectada"}
+                    msg = {
+                        "type": "alert",
+                        "status": "warning",
+                        "message": "Anomalía detectada"
+                    }
                     try:
                         await websocket.send_text(json.dumps(msg))
                     except Exception:
@@ -73,6 +86,7 @@ async def cnn_worker():
             pass
         finally:
             cnn_queue.task_done()
+
 
 # --- Lanzar los workers CNN ---
 def launch_cnn_workers():
@@ -94,27 +108,25 @@ async def upload(file: UploadFile = File(...)):
     dst = os.path.join(tmp_dir, file.filename or "video.mp4")
     
     try:
-        logger.info(f"💾 Guardando archivo temporal en: {dst}")
         with open(dst, "wb") as f:
             shutil.copyfileobj(file.file, f)
-        logger.info("✅ Archivo temporal guardado correctamente")
+        logger.info("Archivo temporal guardado correctamente")
     except Exception as e:
-        logger.error(f"❌ Error guardando archivo temporal: {str(e)}")
+        logger.error(f"Error guardando archivo temporal: {str(e)}")
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"Error guardando archivo temporal: {str(e)}")
 
     # Crear sesión local
     sid = new_session_id()
-    logger.info(f"🎬 Creando sesión: {sid}")
     create_session(sid, dst)
     buffers[sid] = deque(maxlen=SEQUENCE_LENGTH)
     cnn_busy[sid] = False
-
+    
     try:
         # Subir a AWS S3
         filename = file.filename or "video.mp4"
         s3_key = f"videos/{sid}_{filename}"
-        logger.info(f"☁️  Subiendo a S3 con key: {s3_key}")
+        logger.info(f"☁️  Subiendo a S3")
         
         with open(dst, "rb") as f:
             s3_key, url = await storage_service.upload_to_s3(f, s3_key)
@@ -122,12 +134,11 @@ async def upload(file: UploadFile = File(...)):
 
         # Obtener tamaño real en S3
         size = await storage_service.get_video_size(s3_key)
-        logger.info(f"📊 Tamaño del video: {size} bytes")
 
         # Guardar metadata en MongoDB (✅ SIN await - función síncrona)
         logger.info("💾 Guardando metadata en MongoDB")
-        video_id = save_video_metadata(s3_key, url, size)  # ✅ SIN await
-        logger.info(f"✅ Metadata guardada con ID: {video_id}")
+        video_id = save_video_metadata(s3_key, url, size)
+        sessions_metadata[sid] = video_id
 
         return JSONResponse({
             "session_id": sid,
@@ -163,6 +174,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         await websocket.close(code=1011)
         return
 
+    msg = {"type": "start", "status": "processing", "message": "Procesando video..."}
+    try:
+        await websocket.send_text(json.dumps(msg))
+    except Exception:
+        await websocket.close(code=1011)
+        return
+    
     # Lanzar workers CNN si no están en ejecución
     if not any(t.get_name().startswith("cnn_worker_") for t in asyncio.all_tasks()):
         launch_cnn_workers()
@@ -239,13 +257,27 @@ async def get_results(session_id: str):
 
     res = analysis_results[session_id]
     summary = generar_resumen(res)
-    
-    # Agregar información del video si está disponible
+
     if session_id in sessions_files:
         summary["session_id"] = session_id
         summary["processed_frames"] = len(res.get("detections", []))
-    
+
+        # 👇 Guardar en Mongo directamente
+        video_id = sessions_metadata.get(session_id)
+        if video_id:
+            logger.info(f"💾 Guardando resultados en MongoDB para video {video_id}")
+            success = update_video_results(video_id, res)
+            if not success:
+                logger.warning(f"⚠️ No se pudieron guardar resultados para video {video_id}")
+            else:
+                summary["saved_to_mongo"] = True
+        else:
+            logger.warning(f"⚠️ No hay video_id asociado a session {session_id}")
+            summary["saved_to_mongo"] = False
+
     return JSONResponse(summary)
+
+
 
 # --- Endpoint: Health Check ---
 @app.get("/health")
