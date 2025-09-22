@@ -11,7 +11,6 @@ boto3
 
 # Machine Learning / Deep Learning
 numpy==2.1.1
-tensorflow==2.17.0   # ⚠️ opcional, solo si lo usas
 ultralytics>=8.3.30  # soporta YOLOv11
 
 # Computer Vision
@@ -19,6 +18,7 @@ opencv-python
 
 # Utilidades
 python-dotenv
+
 
 
 
