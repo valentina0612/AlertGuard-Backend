@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 # Cargar modelos
 # =========================
 modeloDeep = tf.keras.models.load_model("./modelosIA/modelo3DCNN.keras", compile=False)
-modeloObjetos = YOLO("./modelosIA/YOLO.pt", verbose=False)
+modeloObjetos = YOLO("./modelosIA/best.pt", verbose=False)
 print("Modelos cargados correctamente")
 
 # =========================
@@ -31,7 +31,7 @@ async def run_cnn_batch(batch):
 # Detección con YOLO
 # =========================
 def analizar_con_modelos(frame, results_dict, frame_count):
-    results = modeloObjetos.track(frame, persist=True, conf=0.6, imgsz=288,verbose=False)
+    results = modeloObjetos.track(frame, persist=True, conf=0.35, imgsz=288,verbose=False, classes=[0, 1, 2])
     annotated = results[0].plot()
 
     for box in results[0].boxes:
@@ -39,7 +39,7 @@ def analizar_con_modelos(frame, results_dict, frame_count):
         label = results[0].names[cls]
         track_id = int(box.id[0]) if box.id is not None else None
 
-        if track_id is not None and label != "normal person":
+        if track_id is not None and label != "Persona normal":
             results_dict["detections"].append({
                 "type": label,
                 "confidence": float(box.conf[0]),
