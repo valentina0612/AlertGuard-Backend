@@ -16,7 +16,7 @@ onnxruntime
 
 # Computer Vision
 opencv-python
-
+aioboto3
 # Utilidades
 python-dotenv
 
