@@ -1,9 +1,11 @@
 # Web framework
 fastapi
 uvicorn
+python-multipart  # necesario para Form y File en FastAPI
 
 # MongoDB
 pymongo
+certifi  # para TLS/SSL en Atlas
 
 # AWS S3
 boto3>=1.35.0
@@ -22,6 +24,7 @@ opencv-python
 python-dotenv
 pydantic>=2.0
 pydantic-settings>=2.0
+
 
 
 
