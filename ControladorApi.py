@@ -56,20 +56,21 @@ async def run_cnn_async(batch):
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(executor, run_cnn_batch_sync, batch)
 
-# --- Worker CNN ---
+
+# --- Worker CNN adaptado a ONNX con batch ---
 async def cnn_worker():
     while True:
         try:
             batch, websocket, session_id = await cnn_queue.get()
             try:
-                # 👇 si la sesión ya tiene alerta, no vuelvas a procesar
+                # Si la sesión ya tiene alerta, no volver a procesar
                 if alerts.get(session_id, False):
                     cnn_busy[session_id] = False
                     continue
 
-                pred = await run_cnn_async(batch)
-
-                if pred == 1 and not alerts.get(session_id, False):
+                pred = await run_cnn_async(batch)  # pred es un array, ej: [0,1,1,0,1]
+                # Disparar alerta si la mayoría son 1
+                if np.sum(pred == 1) > len(pred) / 2 and not alerts.get(session_id, False):
                     alerts[session_id] = True
                     msg = {
                         "type": "alert",

@@ -12,7 +12,6 @@ boto3
 # Machine Learning / Deep Learning
 numpy>=1.26,<2.0
 ultralytics>=8.3.30  # soporta YOLOv11
-tensorflow==2.17.0
 
 # Computer Vision
 opencv-python
