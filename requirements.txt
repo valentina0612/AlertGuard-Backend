@@ -1,6 +1,6 @@
 # Web framework
 fastapi
-uvicorn
+uvicorn[standard]   
 python-multipart  # necesario para Form y File en FastAPI
 
 # MongoDB
@@ -24,6 +24,7 @@ opencv-python
 python-dotenv
 pydantic>=2.0
 pydantic-settings>=2.0
+
 
 
 
