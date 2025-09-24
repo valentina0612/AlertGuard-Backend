@@ -19,8 +19,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Incluir las rutas del controlador
-app.mount("/", controlador_app)
+# Montar controlador en /api (para que no choque con la raíz /)
+app.mount("/api", controlador_app)
+
+# Ruta raíz de prueba
+@app.get("/")
+def root():
+    return {"message": "Backend funcionando!"}
 
 # =========================
 # Punto de entrada
