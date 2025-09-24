@@ -1,6 +1,5 @@
-# Web framework
 fastapi
-uvicorn[standard]   
+uvicorn[standard]
 python-multipart  # necesario para Form y File en FastAPI
 
 # MongoDB
@@ -16,6 +15,7 @@ aiobotocore>=2.13.0
 numpy>=1.26,<2.0
 ultralytics>=8.3.30  # soporta YOLOv11
 onnxruntime
+lap>=0.5.12   # dependencia necesaria para tracking en YOLO
 
 # Computer Vision
 opencv-python
@@ -24,6 +24,8 @@ opencv-python
 python-dotenv
 pydantic>=2.0
 pydantic-settings>=2.0
+
+
 
 
 
