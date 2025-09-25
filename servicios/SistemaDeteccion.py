@@ -42,24 +42,19 @@ async def run_cnn_batch(batch):
 # =========================
 # Detección con YOLO
 # =========================
-nombres= {
-    0: "Acción Anómala",
-    1: "Cara Cubierta",
-    3: "Arma"
-}
+
 def analizar_con_modelos(frame, results_dict, frame_count):
     results = modeloObjetos.track(frame, persist=True, conf=0.65, imgsz=288, verbose=False, classes=[0, 1, 3])
     annotated = results[0].plot()
 
     for box in results[0].boxes:
         cls = int(box.cls[0])
-        labelReal = results[0].names[cls]
-        label = nombres.get(cls, results[0].names[cls])
+        label = results[0].names[cls]
         track_id = int(box.id[0]) if box.id is not None else None
 
-        if track_id is not None and labelReal != "normal person":
+        if track_id is not None and label != "normal person":
             results_dict["detections"].append({
-                "type": labelReal,
+                "type": label,
                 "confidence": float(box.conf[0]),
                 "frame_number": frame_count,
                 "track_id": track_id
