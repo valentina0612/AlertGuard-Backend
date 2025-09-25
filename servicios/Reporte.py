@@ -4,14 +4,14 @@ def generar_resumen(resultados):
 
     summary = {
         "status": "completed",
-        "weapons_detected": any(d["type"] == "Arma" for d in resultados["detections"]),
-        "covered_faces_detected": any(d["type"] == "Cubierto" for d in resultados["detections"]),
-        "abnormal_behavior_detected": any(d["type"] == "Accion Anormal" for d in resultados["detections"]),
-        "normal_people_detected": any(d["type"] == "Persona Normal" for d in resultados["detections"]),
-        "weapons_count":sum(1 for t, _ in unique_detections if t == "Arma"),
-        "covered_count":sum(1 for t, _ in unique_detections if t == "Cubierto"),
-        "abnormal_count":sum(1 for t, _ in unique_detections if t == "Accion Anormal"),
-        "normal_count":sum(1 for t, _ in unique_detections if t == "Persona Normal"),
+        "weapons_detected": any(d["type"] == "weapom" for d in resultados["detections"]),
+        "covered_faces_detected": any(d["type"] == "covered" for d in resultados["detections"]),
+        "abnormal_behavior_detected": any(d["type"] == "abnormal action" for d in resultados["detections"]),
+        "normal_people_detected": any(d["type"] == "normal person" for d in resultados["detections"]),
+        "weapons_count":sum(1 for t, _ in unique_detections if t == "weapon"),
+        "covered_count":sum(1 for t, _ in unique_detections if t == "covered"),
+        "abnormal_count":sum(1 for t, _ in unique_detections if t == "abnormal action"),
+        "normal_count":sum(1 for t, _ in unique_detections if t == "normal person"),
         "detections": resultados["detections"]
     }
     return summary

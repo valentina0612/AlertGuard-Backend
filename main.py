@@ -13,19 +13,24 @@ app = FastAPI()
 # Configuración CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:4200"],  # frontend
-    allow_credentials=True,
+    allow_origins=["*"],  # frontend
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Incluir las rutas del controlador
-app.mount("/", controlador_app)
+# Montar controlador en /api (para que no choque con la raíz /)
+app.mount("/api", controlador_app)
+
+# Ruta raíz de prueba
+@app.get("/")
+def root():
+    return {"message": "Backend funcionando!"}
 
 # =========================
 # Punto de entrada
 # =========================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))  # Render asigna el puerto aquí
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
 
