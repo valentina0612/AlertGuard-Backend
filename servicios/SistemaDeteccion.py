@@ -43,7 +43,7 @@ async def run_cnn_batch(batch):
 # Detección con YOLO
 # =========================
 def analizar_con_modelos(frame, results_dict, frame_count):
-    results = modeloObjetos.track(frame, persist=True, conf=0.35, imgsz=288, verbose=False, classes=[0, 1, 3])
+    results = modeloObjetos.track(frame, persist=True, conf=0.70, imgsz=288, verbose=False, classes=[0, 1, 3])
     annotated = results[0].plot()
 
     for box in results[0].boxes:
