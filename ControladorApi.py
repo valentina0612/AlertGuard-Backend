@@ -34,7 +34,7 @@ storage_service = StorageService()
 app = FastAPI()
 
 # --- Executor para procesos pesados ---
-NUM_CNN_WORKERS = 2
+NUM_CNN_WORKERS = 1
 TEMP_FILE_PREFIX = "video_processing_"
 executor = ProcessPoolExecutor(max_workers=NUM_CNN_WORKERS)
 
