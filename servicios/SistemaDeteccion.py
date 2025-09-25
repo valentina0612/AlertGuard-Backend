@@ -51,7 +51,7 @@ def analizar_con_modelos(frame, results_dict, frame_count):
         label = results[0].names[cls]
         track_id = int(box.id[0]) if box.id is not None else None
 
-        if track_id is not None and label != "Persona normal":
+        if track_id is not None and label != "normal person":
             results_dict["detections"].append({
                 "type": label,
                 "confidence": float(box.conf[0]),
