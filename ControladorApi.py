@@ -69,8 +69,17 @@ async def cnn_worker():
                     continue
 
                 pred = await run_cnn_async(batch)  # pred es un array, ej: [0,1,1,0,1]
-                # Disparar alerta si la mayoría son 1
-                if np.sum(pred == 1) > len(pred) / 2 and not alerts.get(session_id, False):
+                # Disparar alerta si la mayoría son 1 y si se ha comportamiento anormal
+                abnormal_count = sum(
+                1 for d in analysis_results[session_id]["detections"]
+                if d["type"] == "abnormal action")
+
+            # Condición de disparo
+                if (
+                    np.sum(pred == 1) > len(pred) / 2
+                    and abnormal_count >= 2
+                    and not alerts.get(session_id, False)
+                ):
                     alerts[session_id] = True
                     msg = {
                         "type": "alert",
