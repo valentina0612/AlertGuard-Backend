@@ -79,7 +79,7 @@ async def cnn_worker():
                 # Disparar alerta si la mayoría son 1 y si se ha comportamiento anormal
                 abnormal_count = sum(
                 1 for d in analysis_results[session_id]["detections"]
-                if d["type"] == "abnormal action")
+                if d["type"] == "Accion anormal")
 
             # Condición de disparo
                 if (
