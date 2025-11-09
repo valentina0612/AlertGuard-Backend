@@ -2,6 +2,7 @@ import asyncio
 import shutil
 import os
 import tempfile
+import base64
 from typing import Dict
 import cv2
 import json
@@ -23,6 +24,10 @@ from servicios.Reporte import generar_resumen
 from config.storage import StorageService
 from servicios.mongo import save_video_metadata, update_video_results
 from config.settings import settings
+from servicios.WorkerManager import (
+    register_worker, mark_worker_completed, get_active_workers_count,
+    cleanup_workers, should_process_frame
+)
 
 # ✅ Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -44,6 +49,8 @@ MIN_SEQUENCE = 8      # Mínimos frames para primera inferencia
 cnn_busy = {}         # session_id -> bool para controlar inferencias en vuelo
 # Mapeo global de session_id -> video_id
 sessions_metadata: Dict[str, str] = {}
+# Lock para sincronizar escrituras concurrentes en analysis_results
+analysis_lock = asyncio.Lock()
 
 # Wrapper síncrono para ejecutar CNN
 def run_cnn_batch_sync(batch):
@@ -169,34 +176,47 @@ async def upload(file: UploadFile = File(...)):
         cleanup_session(sid, remove_file=True)
         raise HTTPException(status_code=500, detail=f"Error procesando video: {str(e)}")
 
-# --- Endpoint: WebSocket ---
-@app.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str):
+# --- Endpoint: WebSocket (con soporte para workers paralelos) ---
+@app.websocket("/ws/{session_id}/worker-{worker_id}")
+async def websocket_worker_endpoint(websocket: WebSocket, session_id: str, worker_id: int):
+    """
+    Endpoint WebSocket con soporte para múltiples workers en paralelo.
+    Cada worker procesa un subconjunto de frames del video.
+    """
     if session_id not in sessions_files:
         await websocket.close(code=1008)
         return
 
     await websocket.accept()
+
+    # Registrar este worker
+    await register_worker(session_id, worker_id)
+    total_workers = await get_active_workers_count(session_id)
+
+    logger.info(f"✅ Worker {worker_id} conectado para sesión {session_id} (Total workers: {total_workers})")
+
     video_path = sessions_files[session_id]
+    # Cada worker necesita su propio VideoCapture
     cap = cv2.VideoCapture(video_path)
 
     if not cap.isOpened():
         await websocket.close(code=1011)
         return
 
-    msg = {"type": "start", "status": "processing", "message": "Procesando video..."}
+    msg = {"type": "start", "status": "processing", "message": f"Worker {worker_id} procesando..."}
     try:
         await websocket.send_text(json.dumps(msg))
     except Exception:
         await websocket.close(code=1011)
         return
-    
+
     # Lanzar workers CNN si no están en ejecución
     if not any(t.get_name().startswith("cnn_worker_") for t in asyncio.all_tasks()):
         launch_cnn_workers()
 
     buf = buffers[session_id]
     frame_count = 0
+    frames_processed_by_worker = 0
 
     try:
         while cap.isOpened():
@@ -205,14 +225,22 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 break
 
             frame_count += 1
+
+            # Verificar si este worker debe procesar este frame
+            if not should_process_frame(frame_count, worker_id, total_workers):
+                continue  # Saltar este frame, le toca a otro worker
+
+            frames_processed_by_worker += 1
             frame = cv2.resize(frame, STREAM_SIZE)
             annotated = frame.copy()
 
-            # Detección con modelos (YOLO)
+            # Detección con modelos (YOLO) - solo procesar según SKIP_FRAMES_YOLO
             if frame_count % SKIP_FRAMES_YOLO == 0:
-                annotated = analizar_con_modelos(
-                    frame, analysis_results[session_id], frame_count
-                )
+                # Usar lock para evitar race conditions al escribir en analysis_results
+                async with analysis_lock:
+                    annotated = analizar_con_modelos(
+                        frame, analysis_results[session_id], frame_count
+                    )
 
             # Preprocesamiento y envío a CNN (ventana deslizante)
             if not alerts[session_id]:
@@ -236,28 +264,59 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2
                 )
 
-            # Enviar frame
-            ok_enc, jpeg = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]) 
-            if ok_enc: 
-                await websocket.send_bytes(jpeg.tobytes())
-            
+            # Enviar frame con número de secuencia para ordenamiento correcto
+            ok_enc, jpeg = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+            if ok_enc:
+                frame_msg = {
+                    "type": "frame",
+                    "frame_number": frame_count,
+                    "worker_id": worker_id,
+                    "data": base64.b64encode(jpeg.tobytes()).decode('utf-8')
+                }
+                await websocket.send_text(json.dumps(frame_msg))
 
-            await asyncio.sleep(0.02)
+            # Sleep reducido para mejor rendimiento
+            await asyncio.sleep(0.01)
 
     except WebSocketDisconnect:
-        pass
+        logger.info(f"🔌 Worker {worker_id} desconectado")
     except Exception as e:
-        logger.error(f"❌ Error en WebSocket: {str(e)}")
+        logger.error(f"❌ Error en WebSocket Worker {worker_id}: {str(e)}")
     finally:
         cap.release()
+
+        # Marcar este worker como completado
+        all_completed = await mark_worker_completed(session_id, worker_id)
+
         try:
-            msg = {"type": "end", "status": "completed"}
+            msg = {
+                "type": "end",
+                "status": "completed",
+                "worker_id": worker_id,
+                "frames_processed": frames_processed_by_worker
+            }
             await websocket.send_text(json.dumps(msg))
         except:
             pass
-        finally:
-            await websocket.close()
+
+        # Solo limpiar la sesión cuando TODOS los workers hayan terminado
+        if all_completed:
+            logger.info(f"✅ Todos los workers completados para sesión {session_id}")
+            await cleanup_workers(session_id)
             cleanup_session(session_id, remove_file=True)
+
+        await websocket.close()
+
+
+# --- Endpoint: WebSocket (backward compatibility - sin workers) ---
+@app.websocket("/ws/{session_id}")
+async def websocket_endpoint(websocket: WebSocket, session_id: str):
+    """
+    Endpoint WebSocket original (sin workers paralelos).
+    Mantiene compatibilidad con frontend antiguo.
+    """
+    # Redirigir a worker-0 (comportamiento por defecto)
+    await websocket_worker_endpoint(websocket, session_id, 0)
 
 # --- Endpoint: Resultados ---
 @app.get("/results/{session_id}")
