@@ -79,7 +79,7 @@ async def cnn_worker():
                 # Disparar alerta si la mayoría son 1 y si se ha comportamiento anormal
                 abnormal_count = sum(
                 1 for d in analysis_results[session_id]["detections"]
-                if d["type"] == "Accion anormal")
+                if d["type"] == "abnormal action")
 
             # Condición de disparo
                 if (
@@ -203,6 +203,13 @@ async def websocket_worker_endpoint(websocket: WebSocket, session_id: str, worke
         await websocket.close(code=1011)
         return
 
+    msg = {"type": "start", "status": "processing", "message": f"Worker {worker_id} procesando..."}
+    try:
+        await websocket.send_text(json.dumps(msg))
+    except Exception:
+        await websocket.close(code=1011)
+        return
+
     # Lanzar workers CNN si no están en ejecución
     if not any(t.get_name().startswith("cnn_worker_") for t in asyncio.all_tasks()):
         launch_cnn_workers()
@@ -288,7 +295,7 @@ async def websocket_worker_endpoint(websocket: WebSocket, session_id: str, worke
                 "worker_id": worker_id,
                 "frames_processed": frames_processed_by_worker
             }
-            #await websocket.send_text(json.dumps(msg))
+            await websocket.send_text(json.dumps(msg))
         except:
             pass
 
