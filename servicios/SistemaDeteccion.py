@@ -44,7 +44,7 @@ async def run_cnn_batch(batch):
 # =========================
 
 def analizar_con_modelos(frame, results_dict, frame_count):
-    results = modeloObjetos.track(frame, persist=True, imgsz=288, conf= 20, verbose=False,  classes=[0, 1, 2])
+    results = modeloObjetos.track(frame, persist=True, imgsz=288, conf=0.20, verbose=False,  classes=[0, 1, 2])
     annotated = results[0].plot()
 
     for box in results[0].boxes:
