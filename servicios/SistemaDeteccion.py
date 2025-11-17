@@ -44,24 +44,49 @@ async def run_cnn_batch(batch):
 # =========================
 
 def analizar_con_modelos(frame, results_dict, frame_count):
-    results = modeloObjetos.track(frame, persist=True, imgsz=288, verbose=False,  classes=[0, 1, 2])
-    annotated = results[0].plot()
-
+    # Umbral muy bajo para que YOLO detecte todo
+    results = modeloObjetos.track(
+        frame, 
+        persist=True, 
+        imgsz=288, 
+        verbose=False, 
+        conf=0.20,  # Detecta todo desde 0.20
+        classes=[0, 1, 2]
+    )
+    
+    boxes_filtradas = []
+    
     for box in results[0].boxes:
         cls = int(box.cls[0])
+        conf = float(box.conf[0])
+        
+        # ✅ Filtrado ESTRICTO por clase
+        if cls == 2:
+            # Clase 2: aceptar solo si conf >= 0.20
+            if conf >= 0.20:
+                boxes_filtradas.append(box)
+        else:
+            # Clases 0 y 1: aceptar SOLO si conf >= 0.65
+            if conf >= 0.65:
+                boxes_filtradas.append(box)
+    
+    # Reemplazar cajas filtradas
+    results[0].boxes = type(results[0].boxes)(boxes_filtradas)
+    annotated = results[0].plot()
+    
+    # Guardar detecciones
+    for box in boxes_filtradas:
+        cls = int(box.cls[0])
+        conf = float(box.conf[0])
         label = results[0].names[cls]
         track_id = int(box.id[0]) if box.id is not None else None
-
-        if cls == 2 and box.conf <= 0.20:
-            continue
-        if cls != 2 and box.conf <= 0.65:
-            continue
-
+        
         if track_id is not None and label != "Persona normal":
             results_dict["detections"].append({
                 "type": label,
-                "confidence": float(box.conf[0]),
+                "confidence": conf,
                 "frame_number": frame_count,
                 "track_id": track_id
             })
+    
     return annotated
